@@ -1,4 +1,4 @@
-export const APP_NAME = 'Ders Notlarım'
+export const APP_NAME = 'MWnotes.'
 
 export const COURSE_COLORS = [
   '#6366f1',

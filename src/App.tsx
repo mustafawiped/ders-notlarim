@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import { Sidebar } from './components/Sidebar'
 import { CourseView } from './components/CourseView'
 import { TopicView } from './components/TopicView'
 import { SearchView } from './components/SearchView'
 import { SetupNotice } from './components/SetupNotice'
+import { AuthView } from './components/AuthView'
+import { LegalView, type LegalPage } from './components/LegalView'
+import { Footer } from './components/Footer'
 import { Icon } from './components/icons'
-import { isDemo, repo } from './lib/repository'
-import { errMessage } from './lib/constants'
-import type { Course, Note, SearchHit, Topic } from './lib/types'
+import { isDemo, createRepository } from './lib/repository'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { APP_NAME, errMessage } from './lib/constants'
+import type { Course, Note, Repository, SearchHit, Topic } from './lib/types'
 
-const SCHEMA_HINT = /does not exist|relation|schema|column/i
+const SCHEMA_HINT = /does not exist|relation|column|row-level security|schema/i
 
 export default function App() {
+  const [authLoading, setAuthLoading] = useState(!isDemo)
+  const [session, setSession] = useState<Session | null>(null)
+  const [legal, setLegal] = useState<LegalPage | null>(null)
   const [courses, setCourses] = useState<Course[]>([])
   const [topics, setTopics] = useState<Topic[]>([])
   const [notes, setNotes] = useState<Note[]>([])
@@ -35,6 +43,27 @@ export default function App() {
     localStorage.setItem('dn.theme', theme)
   }, [theme])
 
+  // Oturum durumu (demo modda atlanır).
+  useEffect(() => {
+    if (isDemo) return
+    supabase!.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+      setAuthLoading(false)
+    })
+    const {
+      data: { subscription },
+    } = supabase!.auth.onAuthStateChange((_event, s) => {
+      setSession(s)
+      setAuthLoading(false)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const userId = session?.user?.id ?? null
+  const userEmail = session?.user?.email ?? null
+
+  const repo = useMemo<Repository>(() => createRepository(userId ?? undefined), [userId])
+
   const refresh = useCallback(async () => {
     try {
       const [cs, ts] = await Promise.all([repo.listCourses(), repo.listAllTopics()])
@@ -46,23 +75,40 @@ export default function App() {
     } finally {
       setInitialLoading(false)
     }
-  }, [])
+  }, [repo])
 
+  // Oturum açıldığında (veya demo modda ilk açılışta) verileri yükle.
   useEffect(() => {
+    if (!isDemo && !userId) return
     void refresh()
-  }, [refresh])
+  }, [isDemo, userId, refresh])
 
-  const reloadNotes = useCallback(async (topicId: string) => {
-    setNotesLoading(true)
-    try {
-      setNotes(await repo.listNotes(topicId))
-      setError(null)
-    } catch (e) {
-      setError(errMessage(e))
-    } finally {
-      setNotesLoading(false)
-    }
-  }, [])
+  // Çıkış yapıldığında tüm verileri temizle.
+  useEffect(() => {
+    if (isDemo || userId) return
+    setCourses([])
+    setTopics([])
+    setNotes([])
+    setSelectedCourseId(null)
+    setSelectedTopicId(null)
+    setQuery('')
+    setError(null)
+  }, [isDemo, userId])
+
+  const reloadNotes = useCallback(
+    async (topicId: string) => {
+      setNotesLoading(true)
+      try {
+        setNotes(await repo.listNotes(topicId))
+        setError(null)
+      } catch (e) {
+        setError(errMessage(e))
+      } finally {
+        setNotesLoading(false)
+      }
+    },
+    [repo],
+  )
 
   useEffect(() => {
     if (selectedTopicId) void reloadNotes(selectedTopicId)
@@ -89,7 +135,7 @@ export default function App() {
       }
     }, 250)
     return () => clearTimeout(timer)
-  }, [query])
+  }, [query, repo])
 
   const guard = useCallback(async (fn: () => Promise<void>) => {
     try {
@@ -105,7 +151,7 @@ export default function App() {
       await repo.createCourse(name, color)
       await refresh()
     }),
-    [guard, refresh],
+    [guard, refresh, repo],
   )
 
   const renameCourse = useCallback(
@@ -113,7 +159,7 @@ export default function App() {
       await repo.updateCourse(id, { name })
       await refresh()
     }),
-    [guard, refresh],
+    [guard, refresh, repo],
   )
 
   const deleteCourse = useCallback(
@@ -125,7 +171,7 @@ export default function App() {
       }
       await refresh()
     }),
-    [guard, refresh, selectedCourseId],
+    [guard, refresh, repo, selectedCourseId],
   )
 
   const addTopic = useCallback(
@@ -133,7 +179,7 @@ export default function App() {
       await repo.createTopic(courseId, title)
       await refresh()
     }),
-    [guard, refresh],
+    [guard, refresh, repo],
   )
 
   const renameTopic = useCallback(
@@ -141,7 +187,7 @@ export default function App() {
       await repo.updateTopic(id, { title })
       await refresh()
     }),
-    [guard, refresh],
+    [guard, refresh, repo],
   )
 
   const deleteTopic = useCallback(
@@ -150,7 +196,7 @@ export default function App() {
       if (selectedTopicId === id) setSelectedTopicId(null)
       await refresh()
     }),
-    [guard, refresh, selectedTopicId],
+    [guard, refresh, repo, selectedTopicId],
   )
 
   const addNote = useCallback(
@@ -158,7 +204,7 @@ export default function App() {
       await repo.createNote(topicId, content)
       await reloadNotes(topicId)
     }),
-    [guard, reloadNotes],
+    [guard, reloadNotes, repo],
   )
 
   const updateNote = useCallback(
@@ -166,7 +212,7 @@ export default function App() {
       await repo.updateNote(id, { content })
       await reloadNotes(topicId)
     }),
-    [guard, reloadNotes],
+    [guard, reloadNotes, repo],
   )
 
   const deleteNote = useCallback(
@@ -174,8 +220,12 @@ export default function App() {
       await repo.deleteNote(id)
       await reloadNotes(topicId)
     }),
-    [guard, reloadNotes],
+    [guard, reloadNotes, repo],
   )
+
+  const logout = useCallback(async () => {
+    if (isSupabaseConfigured) await supabase!.auth.signOut()
+  }, [])
 
   const selectedCourse = useMemo(
     () => courses.find((c) => c.id === selectedCourseId) ?? null,
@@ -211,6 +261,41 @@ export default function App() {
 
   const showSearch = query.trim().length > 0
 
+  if (!isDemo && authLoading) {
+    return (
+      <div className="splash">
+        <div className="brand">
+          <span className="brand-icon brand-icon-lg">
+            <Icon name="cap" size={22} />
+          </span>
+          <span className="brand-name brand-name-lg">{APP_NAME}</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (legal) {
+    return (
+      <div className="app legal-bg">
+        <div className="legal-page">
+          <LegalView page={legal} onBack={() => setLegal(null)} />
+          <Footer onOpenLegal={setLegal} />
+        </div>
+      </div>
+    )
+  }
+
+  if (!isDemo && !userId) {
+    return (
+      <div className="app auth-bg">
+        <div className="auth-shell">
+          <AuthView />
+          <Footer onOpenLegal={setLegal} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <Sidebar
@@ -223,6 +308,8 @@ export default function App() {
         onRename={renameCourse}
         onDelete={deleteCourse}
         onClose={() => setSidebarOpen(false)}
+        userEmail={isDemo ? null : userEmail}
+        onLogout={logout}
       />
       {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
 
@@ -288,7 +375,7 @@ export default function App() {
             <span>
               {error}
               {SCHEMA_HINT.test(error) &&
-                " — Supabase SQL Editor'de schema.sql dosyasını çalıştırdığından emin ol."}
+                " — Supabase SQL Editor'de güncel schema.sql dosyasını çalıştırdığından emin ol."}
             </span>
             <button className="icon-btn" onClick={() => setError(null)} aria-label="Hata kapat">
               <Icon name="x" size={13} />
@@ -296,53 +383,56 @@ export default function App() {
           </div>
         )}
 
-        <SetupNotice />
+        {isDemo && <SetupNotice />}
 
         <div className="content">
-          {initialLoading ? (
-            <p className="muted loading-hint">Yükleniyor…</p>
-          ) : showSearch ? (
-            <SearchView
-              query={query}
-              hits={hits}
-              loading={searching}
-              onOpenHit={(hit) => openTopic(hit.courseId, hit.topicId)}
-            />
-          ) : selectedTopic && selectedCourse ? (
-            <TopicView
-              course={selectedCourse}
-              topic={selectedTopic}
-              notes={notes}
-              loading={notesLoading}
-              onBack={() => setSelectedTopicId(null)}
-              onAddNote={(content) =>
-                selectedTopicId ? addNote(selectedTopicId, content) : Promise.resolve()
-              }
-              onUpdateNote={(id, content) =>
-                selectedTopicId ? updateNote(selectedTopicId, id, content) : Promise.resolve()
-              }
-              onDeleteNote={(id) =>
-                selectedTopicId ? deleteNote(selectedTopicId, id) : Promise.resolve()
-              }
-            />
-          ) : selectedCourse ? (
-            <CourseView
-              course={selectedCourse}
-              topics={courseTopics}
-              onBack={() => selectCourse(null)}
-              onAdd={(title) => addTopic(selectedCourse.id, title)}
-              onRename={renameTopic}
-              onDelete={deleteTopic}
-              onOpenTopic={(id) => openTopic(selectedCourse.id, id)}
-            />
-          ) : (
-            <HomeView
-              courses={courses}
-              topics={topics}
-              demo={isDemo}
-              onSelect={selectCourse}
-            />
-          )}
+          <div className="content-inner">
+            {initialLoading ? (
+              <p className="muted loading-hint">Yükleniyor…</p>
+            ) : showSearch ? (
+              <SearchView
+                query={query}
+                hits={hits}
+                loading={searching}
+                onOpenHit={(hit) => openTopic(hit.courseId, hit.topicId)}
+              />
+            ) : selectedTopic && selectedCourse ? (
+              <TopicView
+                course={selectedCourse}
+                topic={selectedTopic}
+                notes={notes}
+                loading={notesLoading}
+                onBack={() => setSelectedTopicId(null)}
+                onAddNote={(content) =>
+                  selectedTopicId ? addNote(selectedTopicId, content) : Promise.resolve()
+                }
+                onUpdateNote={(id, content) =>
+                  selectedTopicId ? updateNote(selectedTopicId, id, content) : Promise.resolve()
+                }
+                onDeleteNote={(id) =>
+                  selectedTopicId ? deleteNote(selectedTopicId, id) : Promise.resolve()
+                }
+              />
+            ) : selectedCourse ? (
+              <CourseView
+                course={selectedCourse}
+                topics={courseTopics}
+                onBack={() => selectCourse(null)}
+                onAdd={(title) => addTopic(selectedCourse.id, title)}
+                onRename={renameTopic}
+                onDelete={deleteTopic}
+                onOpenTopic={(id) => openTopic(selectedCourse.id, id)}
+              />
+            ) : (
+              <HomeView
+                courses={courses}
+                topics={topics}
+                demo={isDemo}
+                onSelect={selectCourse}
+              />
+            )}
+          </div>
+          <Footer onOpenLegal={setLegal} />
         </div>
       </main>
     </div>
@@ -367,7 +457,7 @@ function HomeView({
         <p>
           {demo
             ? 'Şu an demo modundasın: veriler yalnızca bu tarayıcıda tutuluyor.'
-            : 'Notların Supabase veri tabanında saklanıyor.'}{' '}
+            : 'Notların hesabına bağlı olarak Supabase veri tabanında saklanıyor.'}{' '}
           Derslerini ekle, konuları oluştur ve ders sırasında notlarını buraya yaz.
         </p>
       </div>

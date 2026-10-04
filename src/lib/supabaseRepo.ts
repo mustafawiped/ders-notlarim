@@ -30,9 +30,11 @@ function mapNote(row: Record<string, unknown>): Note {
   }
 }
 
-/** Supabase PostgREST üzerinden çalışan veri katmanı. */
+/** Supabase PostgREST üzerinden çalışan veri katmanı; her kayıt kullanıcıya bağlanır. */
 export class SupabaseRepository implements Repository {
   private client = supabase as NonNullable<typeof supabase>
+
+  constructor(private readonly userId: string) {}
 
   async listCourses(): Promise<Course[]> {
     const { data, error } = await this.client
@@ -46,7 +48,7 @@ export class SupabaseRepository implements Repository {
   async createCourse(name: string, color: string): Promise<Course> {
     const { data, error } = await this.client
       .from('courses')
-      .insert({ name: name.trim(), color })
+      .insert({ user_id: this.userId, name: name.trim(), color })
       .select()
       .single()
     if (error) throw error
@@ -89,7 +91,7 @@ export class SupabaseRepository implements Repository {
   async createTopic(courseId: string, title: string): Promise<Topic> {
     const { data, error } = await this.client
       .from('topics')
-      .insert({ course_id: courseId, title: title.trim() })
+      .insert({ user_id: this.userId, course_id: courseId, title: title.trim() })
       .select()
       .single()
     if (error) throw error
@@ -122,7 +124,7 @@ export class SupabaseRepository implements Repository {
   async createNote(topicId: string, content: string): Promise<Note> {
     const { data, error } = await this.client
       .from('notes')
-      .insert({ topic_id: topicId, content })
+      .insert({ user_id: this.userId, topic_id: topicId, content })
       .select()
       .single()
     if (error) throw error

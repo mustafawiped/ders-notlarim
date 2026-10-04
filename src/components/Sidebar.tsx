@@ -14,6 +14,8 @@ interface SidebarProps {
   onRename: (id: string, name: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onClose: () => void
+  userEmail: string | null
+  onLogout: () => Promise<void>
 }
 
 export function Sidebar({
@@ -26,6 +28,8 @@ export function Sidebar({
   onRename,
   onDelete,
   onClose,
+  userEmail,
+  onLogout,
 }: SidebarProps) {
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
@@ -179,7 +183,18 @@ export function Sidebar({
         </div>
 
         <div className="sidebar-footer">
-          <span className="muted">Kişisel ders notları</span>
+          {userEmail ? (
+            <div className="user-box">
+              <span className="user-email" title={userEmail}>
+                {userEmail}
+              </span>
+              <button className="btn btn-small" onClick={() => void onLogout()} type="button">
+                Çıkış Yap
+              </button>
+            </div>
+          ) : (
+            <span className="muted">Kişisel ders notları</span>
+          )}
         </div>
       </aside>
 
