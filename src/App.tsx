@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Sidebar } from './components/Sidebar'
 import { CourseView } from './components/CourseView'
@@ -9,6 +9,9 @@ import { AuthView } from './components/AuthView'
 import { LegalView, type LegalPage } from './components/LegalView'
 import { Footer } from './components/Footer'
 import { Icon } from './components/icons'
+import { PomodoroTimer } from './components/PomodoroTimer'
+import { ThemePicker } from './components/ThemePicker'
+import { ToastProvider, useToast } from './components/Toast'
 import { isDemo, createRepository } from './lib/repository'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { APP_NAME, errMessage } from './lib/constants'
@@ -16,7 +19,32 @@ import type { Course, Note, Repository, SearchHit, Topic } from './lib/types'
 
 const SCHEMA_HINT = /does not exist|relation|column|row-level security|schema/i
 
+const MOTIVATIONAL_QUOTES = [
+  { text: 'Başarı, her gün tekrarlanan küçük çabaların toplamıdır.', author: 'Robert Collier' },
+  { text: 'Öğrenmek akıntıya karşı kürek çekmek gibidir; durduğunuz an geri gidersiniz.', author: 'Lao Tzu' },
+  { text: 'Gelecek, bugünden ona hazırlananlara aittir.', author: 'Malcolm X' },
+  { text: 'Bilgiye yapılan yatırım her zaman en yüksek kârı getirir.', author: 'Benjamin Franklin' },
+  { text: 'Disiplin, hedefler ile başarı arasındaki köprüdür.', author: 'Jim Rohn' },
+  { text: 'Zorluklar, başarının değerini artıran süslerdir.', author: 'Molière' },
+]
+
+function getGreeting(): string {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 12) return 'Günaydın 🌅'
+  if (hour >= 12 && hour < 18) return 'İyi günler 🚀'
+  return 'İyi akşamlar 🌙'
+}
+
 export default function App() {
+  return (
+    <ToastProvider>
+      <MainApp />
+    </ToastProvider>
+  )
+}
+
+function MainApp() {
+  const { showToast } = useToast()
   const [authLoading, setAuthLoading] = useState(!isDemo)
   const [session, setSession] = useState<Session | null>(null)
   const [legal, setLegal] = useState<LegalPage | null>(null)
@@ -38,10 +66,24 @@ export default function App() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   })
 
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('dn.theme', theme)
   }, [theme])
+
+  // Global search shortcut (Ctrl+K or Cmd+K)
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [])
 
   // Oturum durumu (demo modda atlanır).
   useEffect(() => {
@@ -77,13 +119,13 @@ export default function App() {
     }
   }, [repo])
 
-  // Oturum açıldığında (veya demo modda ilk açılışta) verileri yükle.
+  // Oturum açıldığında verileri yükle.
   useEffect(() => {
     if (!isDemo && !userId) return
     void refresh()
   }, [isDemo, userId, refresh])
 
-  // Çıkış yapıldığında tüm verileri temizle.
+  // Çıkış yapıldığında verileri temizle.
   useEffect(() => {
     if (isDemo || userId) return
     setCourses([])
@@ -147,85 +189,103 @@ export default function App() {
   }, [])
 
   const addCourse = useCallback(
-    (name: string, color: string) => guard(async () => {
-      await repo.createCourse(name, color)
-      await refresh()
-    }),
-    [guard, refresh, repo],
+    (name: string, color: string) =>
+      guard(async () => {
+        await repo.createCourse(name, color)
+        await refresh()
+        showToast(`"${name}" dersi oluşturuldu! 🎨`)
+      }),
+    [guard, refresh, repo, showToast],
   )
 
   const renameCourse = useCallback(
-    (id: string, name: string) => guard(async () => {
-      await repo.updateCourse(id, { name })
-      await refresh()
-    }),
-    [guard, refresh, repo],
+    (id: string, name: string) =>
+      guard(async () => {
+        await repo.updateCourse(id, { name })
+        await refresh()
+        showToast('Ders yeniden adlandırıldı')
+      }),
+    [guard, refresh, repo, showToast],
   )
 
   const deleteCourse = useCallback(
-    (id: string) => guard(async () => {
-      await repo.deleteCourse(id)
-      if (selectedCourseId === id) {
-        setSelectedCourseId(null)
-        setSelectedTopicId(null)
-      }
-      await refresh()
-    }),
-    [guard, refresh, repo, selectedCourseId],
+    (id: string) =>
+      guard(async () => {
+        await repo.deleteCourse(id)
+        if (selectedCourseId === id) {
+          setSelectedCourseId(null)
+          setSelectedTopicId(null)
+        }
+        await refresh()
+        showToast('Ders silindi')
+      }),
+    [guard, refresh, repo, selectedCourseId, showToast],
   )
 
   const addTopic = useCallback(
-    (courseId: string, title: string) => guard(async () => {
-      await repo.createTopic(courseId, title)
-      await refresh()
-    }),
-    [guard, refresh, repo],
+    (courseId: string, title: string) =>
+      guard(async () => {
+        await repo.createTopic(courseId, title)
+        await refresh()
+        showToast(`"${title}" konusu eklendi! 📑`)
+      }),
+    [guard, refresh, repo, showToast],
   )
 
   const renameTopic = useCallback(
-    (id: string, title: string) => guard(async () => {
-      await repo.updateTopic(id, { title })
-      await refresh()
-    }),
-    [guard, refresh, repo],
+    (id: string, title: string) =>
+      guard(async () => {
+        await repo.updateTopic(id, { title })
+        await refresh()
+        showToast('Konu güncellendi')
+      }),
+    [guard, refresh, repo, showToast],
   )
 
   const deleteTopic = useCallback(
-    (id: string) => guard(async () => {
-      await repo.deleteTopic(id)
-      if (selectedTopicId === id) setSelectedTopicId(null)
-      await refresh()
-    }),
-    [guard, refresh, repo, selectedTopicId],
+    (id: string) =>
+      guard(async () => {
+        await repo.deleteTopic(id)
+        if (selectedTopicId === id) setSelectedTopicId(null)
+        await refresh()
+        showToast('Konu silindi')
+      }),
+    [guard, refresh, repo, selectedTopicId, showToast],
   )
 
   const addNote = useCallback(
-    (topicId: string, content: string) => guard(async () => {
-      await repo.createNote(topicId, content)
-      await reloadNotes(topicId)
-    }),
+    (topicId: string, content: string) =>
+      guard(async () => {
+        await repo.createNote(topicId, content)
+        await reloadNotes(topicId)
+      }),
     [guard, reloadNotes, repo],
   )
 
   const updateNote = useCallback(
-    (topicId: string, id: string, content: string) => guard(async () => {
-      await repo.updateNote(id, { content })
-      await reloadNotes(topicId)
-    }),
+    (topicId: string, id: string, content: string) =>
+      guard(async () => {
+        await repo.updateNote(id, { content })
+        await reloadNotes(topicId)
+      }),
     [guard, reloadNotes, repo],
   )
 
   const deleteNote = useCallback(
-    (topicId: string, id: string) => guard(async () => {
-      await repo.deleteNote(id)
-      await reloadNotes(topicId)
-    }),
+    (topicId: string, id: string) =>
+      guard(async () => {
+        await repo.deleteNote(id)
+        await reloadNotes(topicId)
+      }),
     [guard, reloadNotes, repo],
   )
 
   const logout = useCallback(async () => {
-    if (isSupabaseConfigured) await supabase!.auth.signOut()
-  }, [])
+    if (isSupabaseConfigured) {
+      await supabase!.auth.signOut()
+      showToast('Oturum kapatıldı 👋')
+    }
+  }, [showToast])
 
   const selectedCourse = useMemo(
     () => courses.find((c) => c.id === selectedCourseId) ?? null,
@@ -264,11 +324,12 @@ export default function App() {
   if (!isDemo && authLoading) {
     return (
       <div className="splash">
-        <div className="brand">
-          <span className="brand-icon brand-icon-lg">
-            <Icon name="cap" size={22} />
+        <div className="brand splash-brand">
+          <span className="brand-icon brand-icon-lg brand-pulse">
+            <Icon name="cap" size={26} />
           </span>
           <span className="brand-name brand-name-lg">{APP_NAME}</span>
+          <span className="muted">Notların yükleniyor…</span>
         </div>
       </div>
     )
@@ -342,13 +403,14 @@ export default function App() {
           <div className="search-wrap">
             <Icon name="search" size={14} className="search-icon" />
             <input
+              ref={searchInputRef}
               className="input search-input"
-              placeholder="Konu veya not ara…"
+              placeholder="Konu veya not ara… (Ctrl+K)"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="Ara"
             />
-            {query && (
+            {query ? (
               <button
                 className="icon-btn search-clear"
                 onClick={() => setQuery('')}
@@ -356,17 +418,23 @@ export default function App() {
               >
                 <Icon name="x" size={13} />
               </button>
+            ) : (
+              <kbd className="search-kbd">⌘K</kbd>
             )}
           </div>
 
-          <button
-            className="icon-btn"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            aria-label="Tema değiştir"
-            title={theme === 'dark' ? 'Açık tema' : 'Koyu tema'}
-          >
-            <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
-          </button>
+          <div className="topbar-actions">
+            <PomodoroTimer />
+            <ThemePicker />
+            <button
+              className="icon-btn"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              aria-label="Tema değiştir"
+              title={theme === 'dark' ? 'Açık tema' : 'Koyu tema'}
+            >
+              <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
+            </button>
+          </div>
         </header>
 
         {error && (
@@ -428,7 +496,9 @@ export default function App() {
                 courses={courses}
                 topics={topics}
                 demo={isDemo}
+                userEmail={userEmail}
                 onSelect={selectCourse}
+                onFocusSearch={() => searchInputRef.current?.focus()}
               />
             )}
           </div>
@@ -443,59 +513,161 @@ function HomeView({
   courses,
   topics,
   demo,
+  userEmail,
   onSelect,
+  onFocusSearch,
 }: {
   courses: Course[]
   topics: Topic[]
   demo: boolean
+  userEmail: string | null
   onSelect: (id: string) => void
+  onFocusSearch: () => void
 }) {
+  const [quoteIdx, setQuoteIdx] = useState(0)
+
+  const quote = MOTIVATIONAL_QUOTES[quoteIdx]
+  const greeting = getGreeting()
+  const displayName = userEmail ? userEmail.split('@')[0] : 'Öğrenci'
+
+  const nextQuote = () => {
+    setQuoteIdx((prev) => (prev + 1) % MOTIVATIONAL_QUOTES.length)
+  }
+
+  const completedSessions = Number(localStorage.getItem('dn.pomodoro_count') ?? 0)
+
   return (
     <div className="home">
+      {/* Hero Kartı */}
       <div className="home-hero">
-        <h1>Hoş geldin 👋</h1>
-        <p>
-          {demo
-            ? 'Şu an demo modundasın: veriler yalnızca bu tarayıcıda tutuluyor.'
-            : 'Notların hesabına bağlı olarak Supabase veri tabanında saklanıyor.'}{' '}
-          Derslerini ekle, konuları oluştur ve ders sırasında notlarını buraya yaz.
-        </p>
-      </div>
+        <div className="home-hero-content">
+          <span className="home-badge">
+            <Icon name="sparkles" size={13} />
+            {APP_NAME} Çalışma Alanı
+          </span>
+          <h1>
+            {greeting}, {displayName}!
+          </h1>
+          <p>
+            {demo
+              ? 'Şu an demo modundasın: veriler yerel olarak tarayıcında saklanıyor.'
+              : 'Ders notların ve konuların hesabınla güvenli bir şekilde senkronize ediliyor.'}{' '}
+            Dilediğin derse gir, konularını incele ve notlarını zengin formatta tut.
+          </p>
 
-      <div className="stats">
-        <div className="stat-card">
-          <span className="stat-num">{courses.length}</span>
-          <span className="stat-label">ders</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-num">{topics.length}</span>
-          <span className="stat-label">konu</span>
-        </div>
-      </div>
-
-      {courses.length > 0 ? (
-        <div className="home-hint">
-          <h2>Derslerine devam et</h2>
-          <div className="recent-courses">
-            {courses.map((course) => (
-              <button
-                key={course.id}
-                className="recent-course"
-                onClick={() => onSelect(course.id)}
-                type="button"
-              >
-                <span className="dot" style={{ background: course.color }} />
-                {course.name}
-                <Icon name="chevronRight" size={14} />
-              </button>
-            ))}
+          <div className="home-hero-actions">
+            <button className="hero-btn hero-btn-primary" onClick={onFocusSearch} type="button">
+              <Icon name="search" size={14} />
+              Notlarda Ara (Ctrl+K)
+            </button>
           </div>
         </div>
-      ) : (
-        <p className="empty-hint">
-          Başlamak için soldaki <strong>+</strong> düğmesiyle ilk dersini ekle.
-        </p>
-      )}
+
+        {/* Günün İlhamı */}
+        <div className="home-quote-card">
+          <div className="quote-top">
+            <span className="quote-label">Günün İlhamı</span>
+            <button
+              className="icon-btn quote-refresh"
+              onClick={nextQuote}
+              type="button"
+              title="Yeni Söz"
+            >
+              <Icon name="rotateCcw" size={12} />
+            </button>
+          </div>
+          <blockquote className="quote-text">“{quote.text}”</blockquote>
+          <span className="quote-author">— {quote.author}</span>
+        </div>
+      </div>
+
+      {/* İstatistikler */}
+      <div className="stats-grid">
+        <div className="stat-card">
+          <span className="stat-icon-wrap stat-courses">
+            <Icon name="book" size={18} />
+          </span>
+          <div className="stat-body">
+            <span className="stat-num">{courses.length}</span>
+            <span className="stat-label">Toplam Ders</span>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <span className="stat-icon-wrap stat-topics">
+            <Icon name="note" size={18} />
+          </span>
+          <div className="stat-body">
+            <span className="stat-num">{topics.length}</span>
+            <span className="stat-label">Aktif Konu</span>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <span className="stat-icon-wrap stat-focus">
+            <Icon name="timer" size={18} />
+          </span>
+          <div className="stat-body">
+            <span className="stat-num">{completedSessions}</span>
+            <span className="stat-label">Odak Seansı</span>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <span className="stat-icon-wrap stat-status">
+            <Icon name="check" size={18} />
+          </span>
+          <div className="stat-body">
+            <span className="stat-num">{demo ? 'Demo' : 'Aktif'}</span>
+            <span className="stat-label">{demo ? 'Yerel Depolama' : 'Supabase Bulut'}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Dersler Bölümü */}
+      <div className="home-hint">
+        <div className="home-section-head">
+          <h2>Derslerine Devam Et</h2>
+          <span className="muted">{courses.length} kayıtlı ders</span>
+        </div>
+
+        {courses.length > 0 ? (
+          <div className="home-course-grid">
+            {courses.map((course) => {
+              const topicCount = topics.filter((t) => t.courseId === course.id).length
+              return (
+                <button
+                  key={course.id}
+                  className="home-course-card"
+                  onClick={() => onSelect(course.id)}
+                  type="button"
+                >
+                  <div className="home-course-glow" style={{ background: course.color }} />
+                  <div className="home-course-top">
+                    <span className="dot dot-lg" style={{ background: course.color }} />
+                    <span className="home-course-count">{topicCount} konu</span>
+                  </div>
+                  <span className="home-course-name">{course.name}</span>
+                  <div className="home-course-footer">
+                    <span>Görüntüle</span>
+                    <Icon name="chevronRight" size={14} />
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <span className="empty-icon">
+              <Icon name="plus" size={26} />
+            </span>
+            <p>Henüz eklenmiş bir ders yok.</p>
+            <p className="muted">
+              Sol menüdeki <strong>+</strong> düğmesini kullanarak ilk dersini oluştur.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
